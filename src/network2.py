@@ -93,6 +93,10 @@ class Network(object):
         self.num_layers = len(sizes)
         self.sizes = sizes
         self.default_weight_initializer()
+        self.vel_b = [np.zeros((y, 1)) for y in self.sizes[1:]]
+        self.vel_w = [
+            np.zeros((y, x)) for x, y in zip(self.sizes[:-1], self.sizes[1:])
+        ]
         self.cost = cost
         self.regularization = regularization
 
@@ -156,6 +160,7 @@ class Network(object):
             eta,
             lmbda=0.0,
             early_stopping=0,
+            mu=1,
             evaluation_data=None,
             monitor_evaluation_cost=False,
             monitor_evaluation_accuracy=False,
@@ -193,7 +198,7 @@ class Network(object):
                 for k in range(0, n, mini_batch_size)
             ]
             for mini_batch in mini_batches:
-                self.update_mini_batch(mini_batch, eta, lmbda,
+                self.update_mini_batch(mini_batch, eta, lmbda, mu,
                                        len(training_data))
             print("Epoch %s training complete" % j)
             ac = self.accuracy(evaluation_data)
@@ -202,7 +207,7 @@ class Network(object):
             else:
                 max_ac = ac
                 rounds = 0
-            if rounds >= early_stopping:
+            if early_stopping > 0 and rounds >= early_stopping:
                 print("Early stop at epoch {}".format(j))
                 break
             if monitor_training_cost:
@@ -225,7 +230,7 @@ class Network(object):
         return evaluation_cost, evaluation_accuracy, \
             training_cost, training_accuracy
 
-    def update_mini_batch(self, mini_batch, eta, lmbda, n):
+    def update_mini_batch(self, mini_batch, eta, lmbda, mu, n):
         """Update the network's weights and biases by applying gradient
         descent using backpropagation to a single mini batch.  The
         ``mini_batch`` is a list of tuples ``(x, y)``, ``eta`` is the
@@ -239,15 +244,20 @@ class Network(object):
             delta_nabla_b, delta_nabla_w = self.backprop(x, y)
             nabla_b = [nb + dnb for nb, dnb in zip(nabla_b, delta_nabla_b)]
             nabla_w = [nw + dnw for nw, dnw in zip(nabla_w, delta_nabla_w)]
+        # update the velocity
+        self.vel_w = [
+            mu * vw - eta / len(mini_batch) * nw
+            for vw, nw in zip(self.vel_w, nabla_w)
+        ]
+        self.vel_b = [
+            mu * vb - eta / len(mini_batch) * nb
+            for vb, nb in zip(self.vel_b, nabla_b)
+        ]
         self.weights = [
-            w - eta * (lmbda / n) * (self.regularization).f(w) -
-            (eta / len(mini_batch)) * nw
-            for w, nw in zip(self.weights, nabla_w)
+            w - eta * (lmbda / n) * (self.regularization).f(w) + vw
+            for w, vw in zip(self.weights, self.vel_w)
         ]
-        self.biases = [
-            b - (eta / len(mini_batch)) * nb
-            for b, nb in zip(self.biases, nabla_b)
-        ]
+        self.biases = [b + vb for b, vb in zip(self.biases, self.vel_b)]
 
     def backprop(self, x, y):
         """Return a tuple ``(nabla_b, nabla_w)`` representing the
